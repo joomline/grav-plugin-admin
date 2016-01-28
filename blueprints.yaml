@@ -1,5 +1,5 @@
 name: Admin Panel
-version: 0.4.3
+version: 1.0.7
 description: Adds an advanced administration panel to manage your site
 icon: empire
 author:
@@ -9,6 +9,7 @@ author:
 homepage: https://github.com/getgrav/grav-plugin-admin
 keywords: admin, plugin, manager, panel
 bugs: https://github.com/getgrav/grav-plugin-admin/issues
+readme: https://github.com/getgrav/grav-plugin-admin/blob/develop/README.md
 license: MIT
 
 dependencies:
@@ -57,9 +58,9 @@ form:
         expert: Expert
       help: Auto will use blueprint if available, if none found, it will use "Expert" mode.
 
-    show_beta_msg:
+    google_fonts:
       type: toggle
-      label: Show Beta Message
+      label: Use Google Fonts
       highlight: 1
       default: 1
       options:
@@ -67,7 +68,34 @@ form:
         0: Disabled
       validate:
         type: bool
-      help: Show the beta warning message on the dashboard
+      help: Use Google custom fonts.  Disable this to use Helvetica. Useful when using Cyrillic and other languages with unsupported characters.
+
+    show_beta_msg:
+      type: hidden
+
+    show_github_msg:
+      type: toggle
+      label: Show GitHub Link
+      highlight: 1
+      default: 1
+      options:
+        1: Enabled
+        0: Disabled
+      validate:
+        type: bool
+      help: Show the "Found an issue? Please report it on GitHub." message.
+
+    enable_auto_updates_check:
+      type: toggle
+      label: Automatically check for updates
+      highlight: 1
+      default: 1
+      options:
+        1: Enabled
+        0: Disabled
+      validate:
+        type: bool
+      help: Shows an informative message, in the admin panel, when an update is available.
 
     session.timeout:
       type: text
@@ -139,3 +167,5 @@ form:
       type: hidden
       label: Visitors history
       default: 20
+
+

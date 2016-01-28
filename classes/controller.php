@@ -6,16 +6,19 @@ use Grav\Common\Config\Config;
 use Grav\Common\Filesystem\Folder;
 use Grav\Common\GPM\Installer;
 use Grav\Common\Grav;
-use Grav\Common\Themes;
 use Grav\Common\Uri;
 use Grav\Common\Data;
 use Grav\Common\Page;
+use Grav\Common\Page\Pages;
 use Grav\Common\Page\Collection;
+use Grav\Common\Plugin;
+use Grav\Common\Theme;
 use Grav\Common\User\User;
 use Grav\Common\Utils;
 use Grav\Common\Backup\ZipBackup;
 use Grav\Common\Markdown\Parsedown;
 use Grav\Common\Markdown\ParsedownExtra;
+use RocketTheme\Toolbox\Event\Event;
 use RocketTheme\Toolbox\File\File;
 use RocketTheme\Toolbox\File\JsonFile;
 use Symfony\Component\Yaml\Yaml;
@@ -86,8 +89,41 @@ class AdminController
      */
     public function execute()
     {
+        if (method_exists('Grav\Common\Utils', 'getNonce')) {
+            if (strtolower($_SERVER['REQUEST_METHOD']) == 'post') {
+                if (isset($this->post['admin-nonce'])) {
+                    $nonce = $this->post['admin-nonce'];
+                } else {
+                    $nonce = $this->grav['uri']->param('admin-nonce');
+                }
+                if (!$nonce || !Utils::verifyNonce($nonce, 'admin-form')) {
+                    $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.INVALID_SECURITY_TOKEN'), 'error');
+                    $this->admin->json_response = ['status' => 'error', 'message' => $this->admin->translate('PLUGIN_ADMIN.INVALID_SECURITY_TOKEN')];
+                    return false;
+                }
+                unset($this->post['admin-nonce']);
+            } else {
+                if ($this->task == 'logout') {
+                    $nonce = $this->grav['uri']->param('logout-nonce');
+                    if (!isset($nonce) || !Utils::verifyNonce($nonce, 'logout-form')) {
+                        $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.INVALID_SECURITY_TOKEN'), 'error');
+                        $this->admin->json_response = ['status' => 'error', 'message' => $this->admin->translate('PLUGIN_ADMIN.INVALID_SECURITY_TOKEN')];
+                        return false;
+                    }
+                } else {
+                    $nonce = $this->grav['uri']->param('admin-nonce');
+                    if (!isset($nonce) || !Utils::verifyNonce($nonce, 'admin-form')) {
+                        $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.INVALID_SECURITY_TOKEN'), 'error');
+                        $this->admin->json_response = ['status' => 'error', 'message' => $this->admin->translate('PLUGIN_ADMIN.INVALID_SECURITY_TOKEN')];
+                        return false;
+                    }
+                }
+            }
+        }
+
         $success = false;
         $method = 'task' . ucfirst($this->task);
+
         if (method_exists($this, $method)) {
             try {
                 $success = call_user_func(array($this, $method));
@@ -159,7 +195,8 @@ class AdminController
      *
      * @return bool True if multilang is active
      */
-    protected function isMultilang() {
+    protected function isMultilang()
+    {
         return count($this->grav['config']->get('system.languages.supported', [])) > 1;
     }
 
@@ -170,6 +207,7 @@ class AdminController
      */
     protected function taskLogin()
     {
+        $this->post['username'] = strtolower($this->post['username']);
         if ($this->admin->authenticate($this->post)) {
             // should never reach here, redirects first
         } else {
@@ -191,6 +229,16 @@ class AdminController
         $this->setRedirect('/logout');
 
         return true;
+    }
+
+    /**
+     * Handle logout.
+     *
+     * @return bool True if the action was performed.
+     */
+    protected function taskKeepAlive()
+    {
+        exit();
     }
 
     /**
@@ -232,10 +280,17 @@ class AdminController
 
         $author = $this->grav['config']->get('site.author.name', '');
         $fullname = $user->fullname ?: $username;
-        $reset_link = rtrim($this->grav['uri']->rootUrl(true), '/') . '/' . trim($this->admin->base, '/') . '/reset/task' . $param_sep . 'reset/user'. $param_sep . $username . '/token' . $param_sep . $token;
+        $reset_link = rtrim($this->grav['uri']->rootUrl(true), '/') . '/' . trim($this->admin->base, '/') . '/reset/task' . $param_sep . 'reset/user'. $param_sep . $username . '/token' . $param_sep . $token . '/admin-nonce' . $param_sep . Utils::getNonce('admin-form');
 
         $sitename = $this->grav['config']->get('site.title', 'Website');
-        $from = $this->grav['config']->get('plugins.email.from', 'noreply@getgrav.org');
+        $from = $this->grav['config']->get('plugins.email.from');
+
+        if (empty($from)) {
+            $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.FORGOT_EMAIL_NOT_CONFIGURED'), 'error');
+            $this->setRedirect('/forgot');
+            return true;
+        }
+
         $to = $user->email;
 
         $subject = $this->admin->translate(['PLUGIN_ADMIN.FORGOT_EMAIL_SUBJECT', $sitename]);
@@ -325,7 +380,7 @@ class AdminController
      */
     protected function taskClearCache()
     {
-        if (!$this->authoriseTask('clear cache', ['admin.cache', 'admin.super'])) {
+        if (!$this->authorizeTask('clear cache', ['admin.cache', 'admin.super'])) {
             return;
         }
 
@@ -356,7 +411,7 @@ class AdminController
     protected function taskBackup()
     {
         $param_sep = $this->grav['config']->get('system.param_sep', ':');
-        if (!$this->authoriseTask('backup', ['admin.maintenance', 'admin.super'])) {
+        if (!$this->authorizeTask('backup', ['admin.maintenance', 'admin.super'])) {
             return;
         }
 
@@ -380,7 +435,7 @@ class AdminController
         }
 
         $download = urlencode(base64_encode($backup));
-        $url = rtrim($this->grav['uri']->rootUrl(true), '/') . '/' . trim($this->admin->base, '/') . '/task' . $param_sep . 'backup/download' . $param_sep . $download;
+        $url = rtrim($this->grav['uri']->rootUrl(true), '/') . '/' . trim($this->admin->base, '/') . '/task' . $param_sep . 'backup/download' . $param_sep . $download . '/admin-nonce' . $param_sep . Utils::getNonce('admin-form');
 
         $log->content([
             'time' => time(),
@@ -405,7 +460,7 @@ class AdminController
      */
     protected function taskFilterPages()
     {
-        if (!$this->authoriseTask('filter pages', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('filter pages', ['admin.pages', 'admin.super'])) {
             return;
         }
 
@@ -414,25 +469,72 @@ class AdminController
         $flags = !empty($data['flags']) ? array_map('strtolower', explode(',', $data['flags'])) : [];
         $queries = !empty($data['query']) ? explode(',', $data['query']) : [];
 
+        /** @var Collection $collection */
         $collection = $this->grav['pages']->all();
 
         if (count($flags)) {
-            if (in_array('modular', $flags))
-                $collection = $collection->modular();
+            // Filter by state
+            $pageStates = array('modular', 'nonmodular', 'visible', 'nonvisible', 'routable', 'nonroutable', 'published', 'nonpublished');
 
-            if (in_array('visible', $flags))
-                $collection = $collection->visible();
+            if (count(array_intersect($pageStates, $flags)) > 0) {
+                if (in_array('modular', $flags))
+                    $collection = $collection->modular();
 
-            if (in_array('routable', $flags))
-                $collection = $collection->routable();
+                if (in_array('nonmodular', $flags))
+                    $collection = $collection->nonModular();
+
+                if (in_array('visible', $flags))
+                    $collection = $collection->visible();
+
+                if (in_array('nonvisible', $flags))
+                    $collection = $collection->nonVisible();
+
+                if (in_array('routable', $flags))
+                    $collection = $collection->routable();
+
+                if (in_array('nonroutable', $flags))
+                    $collection = $collection->nonRoutable();
+
+                if (in_array('published', $flags))
+                    $collection = $collection->published();
+
+                if (in_array('nonpublished', $flags))
+                    $collection = $collection->nonPublished();
+            }
+            foreach ($pageStates as $pageState) {
+                if (($pageState = array_search($pageState, $flags)) !== false) {
+                    unset($flags[$pageState]);
+                }
+            }
+
+            // Filter by page type
+            if (count($flags)) {
+                $types = [];
+
+                $pageTypes = Pages::pageTypes();
+                foreach ($pageTypes as $pageType) {
+                    if (($pageType = array_search($pageType, $flags)) !== false) {
+                        $types[] = $pageType;
+                        unset($flags[$pageType]);
+                    }
+                }
+
+                if (count($types)) {
+                    $collection = $collection->ofOneOfTheseTypes($types);
+                }
+            }
+
+            // Filter by page type
+            if (count($flags)) {
+                $accessLevels = $flags;
+                $collection = $collection->ofOneOfTheseAccessLevels($accessLevels);
+            }
         }
 
         if (!empty($queries)) {
             foreach ($collection as $page) {
                 foreach ($queries as $query) {
                     $query = trim($query);
-
-                    // $page->content();
                     if (stripos($page->getRawContent(), $query) === false && stripos($page->title(), $query) === false) {
                         $collection->remove($page);
                     }
@@ -460,7 +562,7 @@ class AdminController
      */
     protected function taskListmedia()
     {
-        if (!$this->authoriseTask('list media', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('list media', ['admin.pages', 'admin.super'])) {
             return;
         }
 
@@ -485,7 +587,7 @@ class AdminController
      */
     protected function taskAddmedia()
     {
-        if (!$this->authoriseTask('add media', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('add media', ['admin.pages', 'admin.super'])) {
             return;
         }
 
@@ -552,7 +654,7 @@ class AdminController
      */
     protected function taskDelmedia()
     {
-        if (!$this->authoriseTask('delete media', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('delete media', ['admin.pages', 'admin.super'])) {
             return;
         }
 
@@ -611,7 +713,7 @@ class AdminController
      */
     protected function taskProcessMarkdown()
     {
-//        if (!$this->authoriseTask('process markdown', ['admin.pages', 'admin.super'])) {
+//        if (!$this->authorizeTask('process markdown', ['admin.pages', 'admin.super'])) {
 //            return;
 //        }
 
@@ -625,6 +727,11 @@ class AdminController
 
             $this->preparePage($page, true);
             $page->header();
+
+            // Add theme template paths to Twig loader
+            $template_paths = $this->grav['locator']->findResources('theme://templates');
+            $loader_chain = $this->grav['twig']->twig->getLoader()->addLoader(new \Twig_Loader_Filesystem($template_paths));
+
             $html = $page->content();
 
             $this->admin->json_response = ['status' => 'success', 'message' => $html];
@@ -642,7 +749,7 @@ class AdminController
      */
     public function taskEnable()
     {
-        if (!$this->authoriseTask('enable plugin', ['admin.plugins', 'admin.super'])) {
+        if (!$this->authorizeTask('enable plugin', ['admin.plugins', 'admin.super'])) {
             return;
         }
 
@@ -651,9 +758,11 @@ class AdminController
         }
 
         // Filter value and save it.
-        $this->post = array('enabled' => 1, '_redirect' => 'plugins');
+        $this->post = array('enabled' => true);
         $obj = $this->prepareData();
         $obj->save();
+
+        $this->post = array('_redirect' => 'plugins');
         $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.SUCCESSFULLY_ENABLED_PLUGIN'), 'info');
 
         return true;
@@ -666,7 +775,7 @@ class AdminController
      */
     public function taskDisable()
     {
-        if (!$this->authoriseTask('disable plugin', ['admin.plugins', 'admin.super'])) {
+        if (!$this->authorizeTask('disable plugin', ['admin.plugins', 'admin.super'])) {
             return;
         }
 
@@ -675,9 +784,11 @@ class AdminController
         }
 
         // Filter value and save it.
-        $this->post = array('enabled' => 0, '_redirect' => 'plugins');
+        $this->post = array('enabled' => false);
         $obj = $this->prepareData();
         $obj->save();
+
+        $this->post = array('_redirect' => 'plugins');
         $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.SUCCESSFULLY_DISABLED_PLUGIN'), 'info');
 
         return true;
@@ -690,7 +801,7 @@ class AdminController
      */
     public function taskActivate()
     {
-        if (!$this->authoriseTask('activate theme', ['admin.themes', 'admin.super'])) {
+        if (!$this->authorizeTask('activate theme', ['admin.themes', 'admin.super'])) {
             return;
         }
 
@@ -714,7 +825,6 @@ class AdminController
         $config = $this->grav['config'];
         $config->reload()->save();
 
-        // TODO: find out why reload and save doesn't always update the object itself (and remove this workaround).
         $config->set('system.pages.theme', $name);
 
         $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.SUCCESSFULLY_CHANGED_THEME'), 'info');
@@ -725,12 +835,12 @@ class AdminController
     /**
      * Handles installing plugins and themes
      *
-     * @return bool True is the action was performed
+     * @return bool True if the action was performed
      */
     public function taskInstall()
     {
         $type = $this->view === 'plugins' ? 'plugins' : 'themes';
-        if (!$this->authoriseTask('install ' . $type, ['admin.' . $type, 'admin.super'])) {
+        if (!$this->authorizeTask('install ' . $type, ['admin.' . $type, 'admin.super'])) {
             return;
         }
 
@@ -738,7 +848,7 @@ class AdminController
 
         $package = $this->route;
 
-        $result = \Grav\Plugin\Admin\Gpm::install($package, []);
+        $result = \Grav\Plugin\Admin\Gpm::install($package, ['theme' => ($type == 'themes')]);
 
         if ($result) {
             $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.INSTALLATION_SUCCESSFUL'), 'info');
@@ -754,14 +864,14 @@ class AdminController
     /**
      * Handles updating Grav
      *
-     * @return bool True is the action was performed
+     * @return bool True if the action was performed
      */
     public function taskUpdategrav()
     {
         require_once __DIR__ . '/gpm.php';
 
-        if (!$this->authoriseTask('install grav', ['admin.super'])) {
-            return;
+        if (!$this->authorizeTask('install grav', ['admin.super'])) {
+            return false;
         }
 
         $result = \Grav\Plugin\Admin\Gpm::selfupgrade();
@@ -778,7 +888,7 @@ class AdminController
     /**
      * Handles updating plugins and themes
      *
-     * @return bool True is the action was performed
+     * @return bool True if the action was performed
      */
     public function taskUpdate()
     {
@@ -786,6 +896,8 @@ class AdminController
 
         $package = $this->route;
         $permissions = [];
+
+        $type = $this->view === 'plugins' ? 'plugins' : 'themes';
 
         // Update multi mode
         if (!$package) {
@@ -803,12 +915,12 @@ class AdminController
         }
 
         foreach ($permissions as $type => $p) {
-            if (!$this->authoriseTask('update ' . $type , $p)) {
+            if (!$this->authorizeTask('update ' . $type , $p)) {
                 return;
             }
         }
 
-        $result = \Grav\Plugin\Admin\Gpm::update($package, []);
+        $result = \Grav\Plugin\Admin\Gpm::update($package, ['theme' => ($type == 'themes')]);
 
         if ($this->view === 'update') {
 
@@ -834,12 +946,12 @@ class AdminController
     /**
      * Handles uninstalling plugins and themes
      *
-     * @return bool True is the action was performed
+     * @return bool True if the action was performed
      */
     public function taskUninstall()
     {
         $type = $this->view === 'plugins' ? 'plugins' : 'themes';
-        if (!$this->authoriseTask('uninstall ' . $type, ['admin.' . $type, 'admin.super'])) {
+        if (!$this->authorizeTask('uninstall ' . $type, ['admin.' . $type, 'admin.super'])) {
             return;
         }
 
@@ -860,6 +972,89 @@ class AdminController
         return true;
     }
 
+    private function cleanFilesData($key, $file)
+    {
+        $config  = $this->grav['config'];
+        $blueprint = isset($this->items['fields'][$key]['files']) ? $this->items['fields'][$key]['files'] : [];
+
+        /** @var Page $page */
+        $page             = null;
+        $cleanFiles[$key] = [];
+        if (!isset($blueprint)) {
+            return false;
+        }
+
+        $type = trim("{$this->view}/{$this->admin->route}", '/');
+        $data = $this->admin->data($type, $this->post);
+
+        $fields = $data->blueprints()->fields();
+        $blueprint = isset($fields[$key]) ? $fields[$key] : [];
+
+
+        $cleanFiles = [$key => []];
+        foreach ((array)$file['error'] as $index => $error) {
+            if ($error == UPLOAD_ERR_OK) {
+                $tmp_name    = $file['tmp_name'][$index];
+                $name        = $file['name'][$index];
+                $type        = $file['type'][$index];
+                $destination = Folder::getRelativePath(rtrim($blueprint['destination'], '/'));
+
+                if (!$this->match_in_array($type, $blueprint['accept'])) {
+                    throw new \RuntimeException('File "' . $name . '" is not an accepted MIME type.');
+                }
+
+                if (Utils::startsWith($destination, '@page:')) {
+                    $parts = explode(':', $destination);
+                    $route = $parts[1];
+                    $page  = $this->grav['page']->find($route);
+
+                    if (!$page) {
+                        throw new \RuntimeException('Unable to upload file to destination. Page route not found.');
+                    }
+
+                    $destination = $page->relativePagePath();
+                } else if ($destination == '@self') {
+                    $page        = $this->admin->page(true);
+                    $destination = $page->relativePagePath();
+                } else {
+                    Folder::mkdir($destination);
+                }
+
+                if (move_uploaded_file($tmp_name, "$destination/$name")) {
+                    $path = $page ? $this->grav['uri']->convertUrl($page, $page->route() . '/' . $name) : $destination . '/' . $name;
+                    $cleanFiles[$key][] = $path;
+                } else {
+                    throw new \RuntimeException("Unable to upload file(s) to $destination/$name");
+                }
+            }
+        }
+
+        return $cleanFiles[$key];
+    }
+
+    private function match_in_array($needle, $haystack)
+    {
+        foreach ((array)$haystack as $item) {
+            if (true == preg_match("#^" . strtr(preg_quote($item, '#'), array('\*' => '.*', '\?' => '.')) . "$#i", $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function processFiles($obj)
+    {
+        foreach ((array)$_FILES as $key => $file) {
+            $cleanFiles = $this->cleanFilesData($key, $file);
+            if ($cleanFiles) {
+                $obj->set($key, $cleanFiles);
+            }
+        }
+
+        return $obj;
+    }
+
     /**
      * Handles form and saves the input data if its valid.
      *
@@ -867,7 +1062,7 @@ class AdminController
      */
     public function taskSave()
     {
-        if (!$this->authoriseTask('save', $this->dataPermissions())) {
+        if (!$this->authorizeTask('save', $this->dataPermissions())) {
             return;
         }
 
@@ -878,12 +1073,29 @@ class AdminController
         if ($this->view == 'pages') {
             /** @var Page\Pages $pages */
             $pages = $this->grav['pages'];
+            $config = $this->grav['config'];
 
             // Find new parent page in order to build the path.
             $route = !isset($data['route']) ? dirname($this->admin->route) : $data['route'];
-            $parent = $route && $route != '/' ? $pages->dispatch($route, true) : $pages->root();
-
             $obj = $this->admin->page(true);
+
+            //Handle system.home.hide_in_urls
+            $hide_home_route = $config->get('system.home.hide_in_urls', false);
+            if ($hide_home_route) {
+                $home_route = $config->get('system.home.alias');
+                $topParent = $obj->topParent();
+                if (isset($topParent)) {
+                    if ($topParent->route() == $home_route) {
+                        $baseRoute = (string) $topParent->route();
+                        if ($obj->parent() != $topParent) {
+                            $baseRoute .= $obj->parent()->route();
+                        }
+                        $route = isset($baseRoute) ? $baseRoute : null;
+                    }
+                }
+            }
+
+            $parent = $route && $route != '/' && $route != '.' ? $pages->dispatch($route, true) : $pages->root();
 
             $original_slug = $obj->slug();
             $original_order = intval(trim($obj->order(), '.'));
@@ -917,11 +1129,15 @@ class AdminController
         } else {
             // Handle standard data types.
             $obj = $this->prepareData();
+            $obj = $this->processFiles($obj);
             $obj->validate();
             $obj->filter();
         }
 
         if ($obj) {
+            // Event to manipulate data before saving the object
+            $this->grav->fireEvent('onAdminSave', new Event(['object' => &$obj]));
+
             $obj->save(true);
             $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.SUCCESSFULLY_SAVED'), 'info');
         }
@@ -950,7 +1166,24 @@ class AdminController
                     $obj->language($this->grav['session']->admin_lang);
                 }
             }
-            $this->setRedirect(($multilang ? ('/' . $obj->language()) : '') . '/admin/' . $this->view . $obj->route());
+            $admin_route = $this->grav['config']->get('plugins.admin.route');
+
+            //Handle system.home.hide_in_urls
+            $route = $obj->route();
+            $hide_home_route = $config->get('system.home.hide_in_urls', false);
+            if ($hide_home_route) {
+                $home_route = $config->get('system.home.alias');
+                $topParent = $obj->topParent();
+                if (isset($topParent)) {
+                    if ($topParent->route() == $home_route) {
+                        $route = (string) $topParent->route() . $route;
+                    }
+                }
+            }
+
+            $redirect_url = '/' . ($multilang ? ($obj->language()) : '') . $admin_route . '/' . $this->view . $route;
+
+            $this->setRedirect($redirect_url);
         }
 
         return true;
@@ -968,6 +1201,11 @@ class AdminController
             return true;
         }
 
+        if ($this->view == 'groups') {
+            $this->setRedirect("{$this->view}/{$this->post['groupname']}");
+            return true;
+        }
+
         if ($this->view != 'pages') {
             return false;
         }
@@ -981,6 +1219,11 @@ class AdminController
         $path = $route . '/' . $folder;
 
         $this->admin->session()->{$path} = $data;
+
+        // Store the name and route of a page, to be used prefilled defaults of the form in the future
+        $this->admin->session()->lastPageName = $data['name'];
+        $this->admin->session()->lastPageRoute = $data['route'];
+
         $this->setRedirect("{$this->view}/". ltrim($path, '/'));
 
         return true;
@@ -994,7 +1237,7 @@ class AdminController
      */
     protected function taskCopy()
     {
-        if (!$this->authoriseTask('copy page', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('copy page', ['admin.pages', 'admin.super'])) {
             return;
         }
 
@@ -1052,7 +1295,7 @@ class AdminController
      */
     protected function taskReorder()
     {
-        if (!$this->authoriseTask('reorder pages', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('reorder pages', ['admin.pages', 'admin.super'])) {
             return;
         }
 
@@ -1073,7 +1316,7 @@ class AdminController
      */
     protected function taskDelete()
     {
-        if (!$this->authoriseTask('delete page', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('delete page', ['admin.pages', 'admin.super'])) {
             return;
         }
 
@@ -1115,7 +1358,8 @@ class AdminController
      *
      * @return bool True if the action was performed.
      */
-    protected function taskSwitchlanguage() {
+    protected function taskSwitchlanguage()
+    {
         $data = $this->post;
 
         if (isset($data['lang'])) {
@@ -1137,9 +1381,9 @@ class AdminController
 
         $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.SUCCESSFULLY_SWITCHED_LANGUAGE'), 'info');
 
-        $this->setRedirect('/' . $language .'/admin/' . $redirect);
+        $admin_route = $this->grav['config']->get('plugins.admin.route');
+        $this->setRedirect('/' . $language . $admin_route . '/' . $redirect);
 
-        return true;
     }
 
     /**
@@ -1147,8 +1391,9 @@ class AdminController
      *
      * @return bool True if the action was performed.
      */
-    protected function taskSaveas() {
-        if (!$this->authoriseTask('save', $this->dataPermissions())) {
+    protected function taskSaveas()
+    {
+        if (!$this->authorizeTask('save', $this->dataPermissions())) {
             return;
         }
 
@@ -1169,8 +1414,21 @@ class AdminController
 
         $file = $obj->file();
         if ($file) {
-            $filename = substr($obj->name(), 0, -(strlen($obj->extension())));
-            $path = $obj->path() . DS . $filename . '.' . $language .'.md';
+            $filename = substr($obj->name(), 0, -(strlen('.' . $language . '.md')));
+
+            if (substr($filename, -3, 1) == '.') {
+                if (substr($filename, -2) == substr($language, 0, 2)) {
+                    $filename = str_replace(substr($filename, -2), $language, $filename);
+                }
+            } elseif (substr($filename, -6, 1) == '.') {
+                if (substr($filename, -5) == substr($language, 0, 5)) {
+                    $filename = str_replace(substr($filename, -5), $language, $filename);
+                }
+            } else {
+                $filename .= '.' . $language;
+            }
+
+            $path = $obj->path() . DS . $filename . '.md';
             $aFile = File::instance($path);
             $aFile->save();
 
@@ -1186,6 +1444,90 @@ class AdminController
         $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.SUCCESSFULLY_SWITCHED_LANGUAGE'), 'info');
         $this->setRedirect('/' . $language . $uri->route());
 
+        return true;
+    }
+
+    /**
+     * Determine if the user can edit media
+     *
+     * @return bool True if the media action is allowed
+     */
+    protected function canEditMedia()
+    {
+        $type = 'media';
+        if (!$this->authorizeTask('edit media', ['admin.' . $type, 'admin.super'])) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Handles removing a media file
+     *
+     * @return bool True if the action was performed
+     */
+    public function taskRemoveMedia()
+    {
+        if (!$this->canEditMedia()) {
+            return false;
+        }
+
+        $filename = base64_decode($this->route);
+        $file = File::instance($filename);
+        $resultRemoveMedia = false;
+        $resultRemoveMediaMeta = true;
+
+        if ($file->exists()) {
+            $resultRemoveMedia = $file->delete();
+
+            $metaFilePath = $filename . '.meta.yaml';
+            $metaFilePath = str_replace('@3x', '', $metaFilePath);
+            $metaFilePath = str_replace('@2x', '', $metaFilePath);
+
+            if (is_file($metaFilePath)) {
+                $metaFile = File::instance($metaFilePath);
+                $resultRemoveMediaMeta = $metaFile->delete();
+            }
+        }
+
+        if ($resultRemoveMedia && $resultRemoveMediaMeta) {
+            $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.REMOVE_SUCCESSFUL'), 'info');
+        } else {
+            $this->admin->setMessage($this->admin->translate('PLUGIN_ADMIN.REMOVE_FAILED'), 'error');
+        }
+
+        $this->post = array('_redirect' => 'media');
+        return true;
+    }
+
+    /**
+     * Handle deleting a file from a blueprint
+     *
+     * @return bool True if the action was performed.
+     */
+    protected function taskRemoveFileFromBlueprint()
+    {
+        $uri = $this->grav['uri'];
+        $this->taskRemoveMedia();
+
+        $field = $uri->param('field');
+        $blueprint = $uri->param('blueprint');
+        $this->grav['config']->set($blueprint . '.' . $field, '');
+        if (substr($blueprint, 0, 7) == 'plugins') {
+            Plugin::saveConfig(substr($blueprint, 8));
+        }
+        if (substr($blueprint, 0, 6) == 'themes') {
+            Theme::saveConfig(substr($blueprint, 7));
+        }
+
+        $redirect = base64_decode($uri->param('redirect'));
+        $route = $this->grav['config']->get('plugins.admin.route');
+
+        if (substr($redirect, 0, strlen($route)) == $route) {
+            $redirect = substr($redirect, strlen($route) + 1);
+        }
+
+        $this->post = array('_redirect' => $redirect);
         return true;
     }
 
@@ -1263,20 +1605,23 @@ class AdminController
         switch ($type) {
             case 'configuration':
             case 'system':
-                $permissions[] = ['admin.configuration'];
+                $permissions[] = 'admin.configuration';
                 break;
             case 'settings':
             case 'site':
-                $permissions[] = ['admin.settings'];
+                $permissions[] = 'admin.settings';
                 break;
             case 'plugins':
-                $permissions[] = ['admin.plugins'];
+                $permissions[] = 'admin.plugins';
                 break;
             case 'themes':
-                $permissions[] = ['admin.themes'];
+                $permissions[] = 'admin.themes';
                 break;
             case 'users':
-                $permissions[] = ['admin.users'];
+                $permissions[] = 'admin.users';
+                break;
+            case 'pages':
+                $permissions[] = 'admin.pages';
                 break;
         }
 
@@ -1314,6 +1659,12 @@ class AdminController
             $name .= '.md';
             $page->name($name);
             $page->template($type);
+
+            // unset some header things, template for now as we've just set that
+            if (isset($input['header']['template'])) {
+                unset($input['header']['template']);
+            }
+
         }
 
         // Special case for Expert mode: build the raw, unset content
@@ -1365,9 +1716,9 @@ class AdminController
      * @param array $permissions The permissions given
      * @return bool True if authorized. False if not.
      */
-    protected function authoriseTask($task = '', $permissions = [])
+    protected function authorizeTask($task = '', $permissions = [])
     {
-        if (!$this->admin->authorise($permissions)) {
+        if (!$this->admin->authorize($permissions)) {
             if ($this->grav['uri']->extension() === 'json')
                 $this->admin->json_response = ['status' => 'unauthorized', 'message' => $this->admin->translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK') . ' ' . $task . '.'];
             else

@@ -37,7 +37,7 @@ $form-select-pad: 5px 30px 5px 10px;
 
 form {
 
-    h1 {
+    h1, h3 {
         color: $page-bg;
         padding: 0 $padding-default 0.5rem;
         margin: 0 0 1rem;
@@ -227,7 +227,7 @@ form {
         margin: 0;
     }
 
-    input[type=text], input[type=password], input[type=email] {
+    input[type=text], input[type=password], input[type=email], input[type=date] {
         width: 100%;
         border: $form-border-width solid $form-border;
         background: $white;
@@ -361,6 +361,18 @@ form {
     }
 }
 
+// Display
+.form-display-wrapper {
+    p {
+        padding-left: 0;
+        padding-right: 0;
+
+        &:first-child {
+            margin-top: 0;
+        }
+    }
+}
+
 // YAML CodeMirror
 .form-frontmatter-wrapper {
     margin-bottom: 3rem;
@@ -455,4 +467,69 @@ form {
 
 .form-label.block {
     z-index: 10000;
+
+    &:hover {
+        z-index: 10005;
+    }
+}
+
+// Fieldset
+#admin-main .admin-block h2 {
+    font-size: 1.25rem;
+    margin: 0 0 .5rem;
+
+    letter-spacing: normal;
+}
+.form-fieldset {
+    background-color: #f7f7f7;
+    border: 2px solid #e1e1e1;
+    margin: 1rem 2rem;
+}
+
+.form-fieldset--label {
+    background-color: #f3f3f3;
+
+    &:hover,
+    .form-fieldset input:checked + & {
+        background-color: #eee;
+    }
+
+    label {
+        display: table;
+        font-size: 1.25rem;
+        padding: .5rem 1rem;
+        width: 100%;
+    }
+
+    h2 {
+        margin: 0 !important;
+    }
+
+    .actions {
+        font-size: initial;
+        display: table-cell;
+        text-align: right;
+        vertical-align: middle;
+    }
+
+    & + .form-data {
+        margin-top: 1rem;
+        padding: 0;
+    }
+}
+.form-fieldset--cursor {
+    cursor: pointer;
+}
+.form-fieldset--info {
+    font-size: small;
+}
+.form-fieldset > input:checked ~ .form-data,
+.form-fieldset--collapsible .open,
+.form-fieldset input:checked ~ .form-label .form-fieldset--collapsible .close {
+    display: block;
+}
+.form-fieldset > .form-data,
+.form-fieldset--collapsible .close,
+.form-fieldset input:checked ~ .form-label .form-fieldset--collapsible .open {
+    display: none;
 }

@@ -32,7 +32,8 @@ class Gpm
         'overwrite'       => true,
         'ignore_symlinks' => true,
         'skip_invalid'    => true,
-        'install_deps'    => true
+        'install_deps'    => true,
+        'theme'           => false
     ];
 
     public static function install($packages, $options)
@@ -79,7 +80,7 @@ class Gpm
 
             $local = static::download($package);
 
-            Installer::install($local, $options['destination'], ['install_path' => $package->install_path]);
+            Installer::install($local, $options['destination'], ['install_path' => $package->install_path, 'theme' => $options['theme']]);
             Folder::delete(dirname($local));
 
             $errorCode = Installer::lastErrorCode();
@@ -153,9 +154,9 @@ class Gpm
 
         $filename = $package->slug . basename($package->zipball_url);
 
-        file_put_contents($cache_dir . DS . $filename, $contents);
+        file_put_contents($cache_dir . DS . $filename . '.zip', $contents);
 
-        return $cache_dir . DS . $filename;
+        return $cache_dir . DS . $filename . '.zip';
     }
 
     private static function _downloadSelfupgrade($package, $tmp)
@@ -166,7 +167,8 @@ class Gpm
         return $tmp . DS . $package['name'];
     }
 
-    public static function selfupgrade() {
+    public static function selfupgrade()
+    {
         $upgrader = new Upgrader();
 
         if (!Installer::isGravInstance(GRAV_ROOT)) {
@@ -175,6 +177,17 @@ class Gpm
 
         if (is_link(GRAV_ROOT . DS . 'index.php')) {
             Installer::setError(Installer::IS_LINK);
+            return false;
+        }
+
+        if (method_exists($upgrader, 'meetsRequirements') && !$upgrader->meetsRequirements()) {
+            $error = [];
+            $error[] = '<p>Grav has increased the minimum PHP requirement.<br />';
+            $error[] = 'You are currently running PHP <strong>' . PHP_VERSION .'</strong>';
+            $error[] = ', but PHP <strong>' . GRAV_PHP_MIN .'</strong> is required.</p>';
+            $error[] = '<p><a href="http://getgrav.org/blog/changing-php-requirements-to-5.5" class="button button-small secondary">Additional information</a></p>';
+
+            Installer::setError(implode("\n", $error));
             return false;
         }
 

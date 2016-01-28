@@ -12,6 +12,7 @@ use Grav\Common\Plugins;
 use Grav\Common\Themes;
 use Grav\Common\Uri;
 use Grav\Common\User\User;
+use Grav\Common\Utils;
 use RocketTheme\Toolbox\File\File;
 use RocketTheme\Toolbox\File\JsonFile;
 use RocketTheme\Toolbox\File\LogFile;
@@ -191,7 +192,7 @@ class Admin
             }
         }
 
-        return $this->authorise();
+        return $this->authorize();
     }
 
     /**
@@ -201,12 +202,12 @@ class Admin
      *
      * @return bool
      */
-    public function authorise($action = 'admin.login')
+    public function authorize($action = 'admin.login')
     {
         $action = (array)$action;
 
         foreach ($action as $a) {
-            if ($this->user->authorise($a)) {
+            if ($this->user->authorize($a)) {
                 return true;
             }
         }
@@ -312,6 +313,9 @@ class Admin
                     /** @var Plugins $plugins */
                     $plugins = $this->grav['plugins'];
                     $obj = $plugins->get(preg_replace('|plugins/|', '', $type));
+
+                    if (!$obj) { return []; }
+
                     $obj->merge($post);
                     $obj->file($file);
 
@@ -320,6 +324,9 @@ class Admin
                     /** @var Themes $themes */
                     $themes = $this->grav['themes'];
                     $obj = $themes->get(preg_replace('|themes/|', '', $type));
+
+                    if (!$obj) { return []; }
+
                     $obj->merge($post);
                     $obj->file($file);
 
@@ -328,6 +335,15 @@ class Admin
                     $obj = User::load(preg_replace('|users/|', '', $type));
                     $obj->merge($post);
 
+                    $data[$type] = $obj;
+                } elseif (preg_match('|config/|', $type)) {
+                    $type = preg_replace('|config/|', '', $type);
+                    $blueprints = $this->blueprints("config/{$type}");
+                    $config = $this->grav['config'];
+                    $obj = new Data\Data($config->get($type), $blueprints);
+                    $obj->merge($post);
+                    $file = CompiledYamlFile::instance($this->grav['locator']->findResource("config://{$type}.yaml"));
+                    $obj->file($file);
                     $data[$type] = $obj;
                 } else {
                     throw new \RuntimeException("Data type '{$type}' doesn't exist!");
@@ -386,6 +402,50 @@ class Admin
     }
 
     /**
+     * Count the pages
+     *
+     * @return array
+     */
+    public function countPages()
+    {
+        return count($this->grav['pages']->all());
+    }
+
+    /**
+     * Get all template types
+     *
+     * @return array
+     */
+    public function types()
+    {
+        return Pages::types();
+    }
+
+    /**
+     * Get all modular template types
+     *
+     * @return array
+     */
+    public function modularTypes()
+    {
+        return Pages::modularTypes();
+    }
+
+    /**
+     * Get all access levels
+     *
+     * @return array
+     */
+    public function accessLevels()
+    {
+        if (method_exists($this->grav['pages'], 'accessLevels')) {
+            return $this->grav['pages']->accessLevels();
+        } else {
+            return [];
+        }
+    }
+
+    /**
      * Get all plugins.
      *
      * @return array
@@ -393,6 +453,10 @@ class Admin
     public function plugins($local = true)
     {
         $gpm = $this->gpm();
+
+        if (!$gpm) {
+            return;
+        }
 
         return $local ? $gpm->getInstalledPlugins() : $gpm->getRepositoryPlugins()->filter(function (
             $package,
@@ -411,30 +475,16 @@ class Admin
     {
         $gpm = $this->gpm();
 
+        if (!$gpm) {
+            return;
+        }
+
         return $local ? $gpm->getInstalledThemes() : $gpm->getRepositoryThemes()->filter(function ($package, $slug) use
         (
             $gpm
         ) {
             return !$gpm->isThemeInstalled($slug);
         });
-    }
-
-    /**
-     * Get log file for fatal errors.
-     *
-     * @return string
-     */
-    public function logs()
-    {
-        if (!isset($this->logs)) {
-            $file = LogFile::instance($this->grav['locator']->findResource('log://exception.log'));
-
-            $content = $file->content();
-
-            $this->logs = array_reverse($content);
-        }
-
-        return $this->logs;
     }
 
     /**
@@ -452,8 +502,12 @@ class Admin
 
         $latest = array();
 
+        if(is_null($pages->routes())){
+            return;
+        }
+
         foreach ($pages->routes() as $url => $path) {
-            $page = $pages->dispatch($url);
+            $page = $pages->dispatch($url, true);
             if ($page && $page->routable()) {
                 $latest[$page->route()] = ['modified' => $page->modified(), 'page' => $page];
             }
@@ -469,7 +523,6 @@ class Admin
         });
 
         // build new array with just pages in it
-        // TODO: Optimized this
         $list = array();
         foreach ($latest as $item) {
             $list[] = $item['page'];
@@ -523,13 +576,23 @@ class Admin
     }
 
     /**
+     * Returns the list of available backups
+     *
+     * @return array Array containing the latest backups
+     */
+    public function backups()
+    {
+        return [];
+    }
+
+    /**
      * Returns the page creating it if it does not exist.
      *
      * @param $path
      *
      * @return Page
      */
-    protected function getPage($path)
+    public function getPage($path)
     {
         /** @var Pages $pages */
         $pages = $this->grav['pages'];
@@ -614,11 +677,42 @@ class Admin
     public static function adminLanguages()
     {
         $languages = [];
-        $lang_data = Yaml::parse(file_get_contents(__DIR__ . '/../languages.yaml'));
-        foreach ($lang_data as $lang => $values) {
+
+        $path = Grav::instance()['locator']->findResource('plugins://admin/languages');
+
+        /** @var \DirectoryIterator $directory */
+        foreach (new \DirectoryIterator($path) as $file) {
+            if ($file->isDir() || $file->isDot()) {
+                continue;
+            }
+
+            $lang = basename($file->getBasename(), '.yaml');
+
             $languages[$lang] = LanguageCodes::getNativeName($lang);
+
         }
         return $languages;
+    }
+
+    /**
+     * Return the configuration files found
+     *
+     * @return array
+     */
+    public static function configurations()
+    {
+        $configurations = [];
+        $path = Grav::instance()['locator']->findResource('user://config');
+
+        /** @var \DirectoryIterator $directory */
+        foreach (new \DirectoryIterator($path) as $file) {
+            if ($file->isDir() || $file->isDot() || !preg_match('/^[^.].*.yaml$/', $file->getFilename())) {
+                continue;
+            }
+            $configurations[] = basename($file->getBasename(), '.yaml');
+        }
+
+        return $configurations;
     }
 
     /**
@@ -658,6 +752,37 @@ class Admin
     }
 
     /**
+     * Static helper method to return the admin form nonce
+     *
+     * @return string
+     */
+    public static function getNonce()
+    {
+        $action = 'admin-form';
+        return Utils::getNonce($action);
+    }
+
+    /**
+     * Static helper method to return the last used page name
+     *
+     * @return string
+     */
+    public static function getLastPageName()
+    {
+        return Grav::instance()['session']->lastPageName ?: 'default';
+    }
+
+    /**
+     * Static helper method to return the last used page route
+     *
+     * @return string
+     */
+    public static function getLastPageRoute()
+    {
+        return Grav::instance()['session']->lastPageRoute ?: self::route();
+    }
+
+    /**
      * Determine if the plugin or theme info passed is from Team Grav
      *
      * @param object $info Plugin or Theme info object
@@ -678,14 +803,19 @@ class Admin
      *
      * @return string The phpinfo() output
      */
-    function phpinfo() {
-        ob_start();
-        phpinfo();
-        $pinfo = ob_get_contents();
-        ob_end_clean();
+    function phpinfo()
+    {
+        if (function_exists('phpinfo')) {
+            ob_start();
+            phpinfo();
+            $pinfo = ob_get_contents();
+            ob_end_clean();
 
-        $pinfo = preg_replace( '%^.*<body>(.*)</body>.*$%ms','$1',$pinfo);
-        return $pinfo;
+            $pinfo = preg_replace('%^.*<body>(.*)</body>.*$%ms', '$1', $pinfo);
+            return $pinfo;
+        } else {
+            return 'phpinfo() method is not available on this server.';
+        }
     }
 
     /**
@@ -693,7 +823,8 @@ class Admin
      *
      * @param $string the string to translate
      */
-    public function translate($string) {
+    public function translate($string)
+    {
         return $this->_translate($string, [$this->grav['user']->authenticated ? $this->grav['user']->language : 'en']);
     }
 
@@ -727,6 +858,11 @@ class Admin
                 $translation = $this->grav['language']->getTranslation($language, $lookup, $array_support);
             }
 
+            if (!$translation) {
+                $language = 'en';
+                $translation = $this->grav['language']->getTranslation($language, $lookup, $array_support);
+            }
+
             if ($translation) {
                 if (count($args) >= 1) {
                     return vsprintf($translation, $args);
@@ -737,5 +873,66 @@ class Admin
         }
 
         return $lookup;
+    }
+
+    function dateformat2Kendo($php_format)
+    {
+        $SYMBOLS_MATCHING = array(
+            // Day
+            'd' => 'dd',
+            'D' => 'ddd',
+            'j' => 'd',
+            'l' => 'dddd',
+            'N' => '',
+            'S' => '',
+            'w' => '',
+            'z' => '',
+            // Week
+            'W' => '',
+            // Month
+            'F' => 'MMMM',
+            'm' => 'MM',
+            'M' => 'MMM',
+            'n' => 'M',
+            't' => '',
+            // Year
+            'L' => '',
+            'o' => '',
+            'Y' => 'yyyy',
+            'y' => 'yy',
+            // Time
+            'a' => 'tt',
+            'A' => 'tt',
+            'B' => '',
+            'g' => 'h',
+            'G' => 'H',
+            'h' => 'hh',
+            'H' => 'HH',
+            'i' => 'mm',
+            's' => 'ss',
+            'u' => ''
+        );
+        $js_format = "";
+        $escaping = false;
+        for($i = 0; $i < strlen($php_format); $i++)
+        {
+            $char = $php_format[$i];
+            if($char === '\\') // PHP date format escaping character
+            {
+                $i++;
+                if($escaping) $js_format .= $php_format[$i];
+                else $js_format .= '\'' . $php_format[$i];
+                $escaping = true;
+            }
+            else
+            {
+                if($escaping) { $js_format .= "'"; $escaping = false; }
+                if(isset($SYMBOLS_MATCHING[$char]))
+                    $js_format .= $SYMBOLS_MATCHING[$char];
+                else
+                    $js_format .= $char;
+            }
+        }
+        return $js_format;
     }
 }

@@ -1,5 +1,55 @@
 ((function(){
-    var editors = [];
+    var toolbarIdentifiers = [ 'bold', 'italic', 'strike', 'link', 'image', 'blockquote', 'listUl', 'listOl' ];
+    if (typeof window.customToolbarElements !== 'undefined') {
+        window.customToolbarElements.forEach(function(customToolbarElement) {
+            toolbarIdentifiers.push(customToolbarElement.identifier);
+        });
+    }
+
+    var toolbarButtons = {
+        fullscreen: {
+            title  : 'Fullscreen',
+            label  : '<i class="fa fa-fw fa-expand"></i>'
+        },
+        bold : {
+            title  : 'Bold',
+            label  : '<i class="fa fa-fw fa-bold"></i>'
+        },
+        italic : {
+            title  : 'Italic',
+            label  : '<i class="fa fa-fw fa-italic"></i>'
+        },
+        strike : {
+            title  : 'Strikethrough',
+            label  : '<i class="fa fa-fw fa-strikethrough"></i>'
+        },
+        blockquote : {
+            title  : 'Blockquote',
+            label  : '<i class="fa fa-fw fa-quote-right"></i>'
+        },
+        link : {
+            title  : 'Link',
+            label  : '<i class="fa fa-fw fa-link"></i>'
+        },
+        image : {
+            title  : 'Image',
+            label  : '<i class="fa fa-fw fa-picture-o"></i>'
+        },
+        listUl : {
+            title  : 'Unordered List',
+            label  : '<i class="fa fa-fw fa-list-ul"></i>'
+        },
+        listOl : {
+            title  : 'Ordered List',
+            label  : '<i class="fa fa-fw fa-list-ol"></i>'
+        }
+    };
+
+    if (typeof window.customToolbarElements !== 'undefined') {
+        window.customToolbarElements.forEach(function(customToolbarElement) {
+            toolbarButtons[customToolbarElement.identifier] = customToolbarElement.button;
+        });
+    }
 
     var debounce = function(func, wait, immediate) {
         var timeout;
@@ -16,39 +66,24 @@
         };
     };
 
-    var template = [
-        '<div class="grav-mdeditor clearfix" data-mode="tab" data-active-tab="code">',
-            '<div class="grav-mdeditor-navbar">',
-                '<ul class="grav-mdeditor-navbar-nav grav-mdeditor-toolbar"></ul>',
-                '<div class="grav-mdeditor-navbar-flip">',
-                    '<ul class="grav-mdeditor-navbar-nav">',
-                        '<li class="grav-mdeditor-button-code mdeditor-active"><a>{:lblCodeview}</a></li>',
-                        '<li class="grav-mdeditor-button-preview"><a>{:lblPreview}</a></li>',
-                        '<li><a data-mdeditor-button="fullscreen"><i class="fa fa-fw fa-expand"></i></a></li>',
-                    '</ul>',
-                '</div>',
-            '</div>',
-            '<div class="grav-mdeditor-content">',
-                '<div class="grav-mdeditor-code"></div>',
-                '<div class="grav-mdeditor-preview"><div></div></div>',
-            '</div>',
-        '</div>'
-    ].join('');
+    var template = '';
 
     var MDEditor = function(editor, options){
-        var tpl = template, $this = this,
+        var $this = this,
             task = 'task' + GravAdmin.config.param_sep;
+
+        var tpl = ''
 
         this.defaults = {
             markdown     : false,
             autocomplete : true,
             height       : 500,
             codemirror   : { mode: 'htmlmixed', theme: 'paper', lineWrapping: true, dragDrop: true, autoCloseTags: true, matchTags: true, autoCloseBrackets: true, matchBrackets: true, indentUnit: 4, indentWithTabs: false, tabSize: 4, hintOptions: {completionSingle:false}, extraKeys: {"Enter": "newlineAndIndentContinueMarkdownList"} },
-            toolbar      : [ 'bold', 'italic', 'strike', 'link', 'image', 'blockquote', 'listUl', 'listOl' ],
+            toolbar      : toolbarIdentifiers,
             lblPreview   : '<i class="fa fa-fw fa-eye"></i>',
             lblCodeview  : '<i class="fa fa-fw fa-code"></i>',
             lblMarkedview: '<i class="fa fa-fw fa-code"></i>'
-        }
+        };
 
         this.element = $(editor);
         this.options = $.extend({}, this.defaults, options);
@@ -56,6 +91,34 @@
         this.CodeMirror = CodeMirror;
         this.buttons    = {};
 
+        template = [
+            '<div class="grav-mdeditor clearfix" data-mode="tab" data-active-tab="code">',
+                '<div class="grav-mdeditor-navbar">',
+                    '<ul class="grav-mdeditor-navbar-nav grav-mdeditor-toolbar"></ul>',
+                    '<div class="grav-mdeditor-navbar-flip">',
+                        '<ul class="grav-mdeditor-navbar-nav">'];
+
+        if ($this.element.data('grav-preview-enabled')) {
+            template.push('<li class="grav-mdeditor-button-code mdeditor-active"><a>{:lblCodeview}</a></li>');
+            template.push('<li class="grav-mdeditor-button-preview"><a>{:lblPreview}</a></li>');
+        }
+
+        template.push(
+                            '<li><a data-mdeditor-button="fullscreen"><i class="fa fa-fw fa-expand"></i></a></li>',
+                        '</ul>',
+                    '</div>',
+                    '<p class="grav-mdeditor-preview-text" style="display: none;">Preview</p>',
+                '</div>',
+                '<div class="grav-mdeditor-content">',
+                    '<div class="grav-mdeditor-code"></div>',
+                    '<div class="grav-mdeditor-preview"><div></div></div>',
+                '</div>',
+            '</div>'
+        );
+
+        template = template.join('');
+
+        tpl += template;
         tpl = tpl.replace(/\{:lblPreview\}/g, this.options.lblPreview);
         tpl = tpl.replace(/\{:lblCodeview\}/g, this.options.lblCodeview);
 
@@ -82,42 +145,56 @@
             var target = $(e.currentTarget).parent('.dz-preview').find('.dz-filename');
             editor.focus();
 
-            var filename = target.text();
+            var filename = encodeURI(target.text());
             filename = filename.replace(/@3x|@2x|@1x/, '');
+            filename = filename.replace(/\(/g, '%28');
+            filename = filename.replace(/\)/g, '%29');
             if (filename.match(/\.(jpg|jpeg|png|gif)$/)) {
-                editor.doc.replaceSelection('![](' + encodeURI(filename) + ')');
+                editor.doc.replaceSelection('![](' + filename + ')');
             } else {
-                editor.doc.replaceSelection('[' + filename + '](' + encodeURI(filename) + ')');
+                editor.doc.replaceSelection('[' + decodeURI(filename) + '](' + filename + ')');
             }
         });
 
         this.preview.container = this.preview;
 
         this.mdeditor.on('click', '.grav-mdeditor-button-code, .grav-mdeditor-button-preview', function(e) {
-                var task = 'task' + GravAdmin.config.param_sep;
-                e.preventDefault();
+            var task = 'task' + GravAdmin.config.param_sep;
+            e.preventDefault();
 
-                if ($this.mdeditor.attr('data-mode') == 'tab') {
-                    if ($(this).hasClass('grav-mdeditor-button-preview')) {
-                        GravAjax({
-                            dataType: 'JSON',
-                            url: $this.element.data('grav-urlpreview') + '/' + task + 'processmarkdown',
-                            method: 'post',
-                            data: $this.element.parents('form').serialize(),
-                            toastErrors: true,
-                            success: function (response) {
-                                $this.preview.container.html(response.message);
-                            }
-                        });
-                    }
-
-                    $this.mdeditor.find('.grav-mdeditor-button-code, .grav-mdeditor-button-preview').removeClass('mdeditor-active').filter(this).addClass('mdeditor-active');
-
-                    $this.activetab = $(this).hasClass('grav-mdeditor-button-code') ? 'code' : 'preview';
-                    $this.mdeditor.attr('data-active-tab', $this.activetab);
-                    $this.editor.refresh();
+            if ($this.mdeditor.attr('data-mode') == 'tab') {
+                if ($(this).hasClass('grav-mdeditor-button-preview')) {
+                    GravAjax({
+                        dataType: 'JSON',
+                        url: $this.element.data('grav-urlpreview') + '/' + task + 'processmarkdown',
+                        method: 'post',
+                        data: $this.element.parents('form').serialize(),
+                        toastErrors: true,
+                        success: function (response) {
+                            $this.preview.container.html(response.message);
+                        }
+                    });
                 }
-            });
+
+                $this.mdeditor.find('.grav-mdeditor-button-code, .grav-mdeditor-button-preview').removeClass('mdeditor-active').filter(this).addClass('mdeditor-active');
+
+                $this.activetab = $(this).hasClass('grav-mdeditor-button-code') ? 'code' : 'preview';
+                $this.mdeditor.attr('data-active-tab', $this.activetab);
+                $this.editor.refresh();
+
+                if ($this.activetab == 'preview') {
+                    $this.mdeditor.find('.grav-mdeditor-toolbar').fadeOut();
+                    setTimeout(function() {
+                        $this.mdeditor.find('.grav-mdeditor-preview-text').fadeIn();
+                    }, 250);
+                } else {
+                    $this.mdeditor.find('.grav-mdeditor-preview-text').fadeOut();
+                    setTimeout(function() {
+                        $this.mdeditor.find('.grav-mdeditor-toolbar').fadeIn();
+                    }, 250);
+                }
+            }
+        });
 
         this.mdeditor.on('click', 'a[data-mdeditor-button]', function() {
 
@@ -151,7 +228,8 @@
             if($this.mdeditor.is(":visible")) $this.fit();
         });*/
 
-        editors.push(this);
+        MDEditors.editors[this.element.attr('name')] = this;
+        this.element.data('mdeditor_initialized', true);
 
 
         // Methods
@@ -176,8 +254,9 @@
                 if (!$this.buttons[button]) return;
 
                 var title = $this.buttons[button].title ? $this.buttons[button].title : button;
+                var buttonClass = $this.buttons[button].class ? 'class="' + $this.buttons[button].class + '"' : '';
 
-                bar.push('<li><a data-mdeditor-button="'+button+'" title="'+title+'" data-uk-tooltip>'+$this.buttons[button].label+'</a></li>');
+                bar.push('<li><a data-mdeditor-button="'+button+'" title="'+title+'" '+buttonClass+' data-uk-tooltip>'+$this.buttons[button].label+'</a></li>');
             });
 
             this.toolbar.html(bar.join('\n'));
@@ -265,17 +344,16 @@
             });
         };
 
-        this.replaceSelection = function(replace) {
+        this.replaceSelection = function(replace, action) {
 
             var text    = this.editor.getSelection(),
-                indexOf = -1;
+                indexOf = -1,
+                cur     = this.editor.getCursor(),
+                curLine = this.editor.getLine(cur.line),
+                start   = cur.ch,
+                end     = start;
 
             if (!text.length) {
-
-                var cur     = this.editor.getCursor(),
-                    curLine = this.editor.getLine(cur.line),
-                    start   = cur.ch,
-                    end     = start;
 
                 while (end < curLine.length && /[\w$]+/.test(curLine.charAt(end))) ++end;
                 while (start && /[\w$]+/.test(curLine.charAt(start - 1))) --start;
@@ -293,11 +371,18 @@
             var html = replace.replace('$1', text);
 
             this.editor.replaceSelection(html, 'end');
-            if (indexOf !== -1) this.editor.setCursor({ line: cur.line, ch: start + indexOf });
+            if (indexOf !== -1) {
+                    this.editor.setCursor({ line: cur.line, ch: start + indexOf });
+            } else {
+                if (action == 'link' || action == 'image') {
+                    this.editor.setCursor({ line: cur.line, ch: html.length -1 });
+                }
+            }
+
             this.editor.focus();
         };
 
-        this.replaceLine = function(replace) {
+        this.replaceLine = function(replace, action) {
             var pos  = this.editor.getDoc().getCursor(),
                 text = this.editor.getLine(pos.line),
                 html = replace.replace('$1', text);
@@ -312,46 +397,7 @@
         };
 
         this._initToolbar = function(editor) {
-            editor.addButtons({
-
-                fullscreen: {
-                    title  : 'Fullscreen',
-                    label  : '<i class="fa fa-fw fa-expand"></i>'
-                },
-                bold : {
-                    title  : 'Bold',
-                    label  : '<i class="fa fa-fw fa-bold"></i>'
-                },
-                italic : {
-                    title  : 'Italic',
-                    label  : '<i class="fa fa-fw fa-italic"></i>'
-                },
-                strike : {
-                    title  : 'Strikethrough',
-                    label  : '<i class="fa fa-fw fa-strikethrough"></i>'
-                },
-                blockquote : {
-                    title  : 'Blockquote',
-                    label  : '<i class="fa fa-fw fa-quote-right"></i>'
-                },
-                link : {
-                    title  : 'Link',
-                    label  : '<i class="fa fa-fw fa-link"></i>'
-                },
-                image : {
-                    title  : 'Image',
-                    label  : '<i class="fa fa-fw fa-picture-o"></i>'
-                },
-                listUl : {
-                    title  : 'Unordered List',
-                    label  : '<i class="fa fa-fw fa-list-ul"></i>'
-                },
-                listOl : {
-                    title  : 'Ordered List',
-                    label  : '<i class="fa fa-fw fa-list-ol"></i>'
-                }
-
-            });
+            editor.addButtons(toolbarButtons);
 
             addAction('bold', '**$1**');
             addAction('italic', '_$1_');
@@ -404,6 +450,16 @@
                 }
             });
 
+            if (typeof window.customToolbarElements !== 'undefined') {
+                window.customToolbarElements.forEach(function(customToolbarElement) {
+                    editor.element.on('action.' + customToolbarElement.identifier, function() {
+                        if (editor.getCursorMode() == 'markdown') {
+                            customToolbarElement.processAction(editor);
+                        }
+                    });
+                });
+            }
+
             editor.element.on('cursorMode', function(e, param) {
                 if (editor.editor.options.mode == 'gfm') {
                     var pos = editor.editor.getDoc().getCursor();
@@ -416,7 +472,7 @@
             $.extend(editor, {
 
                 enableMarkdown: function() {
-                    enableMarkdown()
+                    enableMarkdown();
                     this.render();
                 },
                 disableMarkdown: function() {
@@ -471,26 +527,48 @@
             function addAction(name, replace, mode) {
                 editor.element.on('action.'+name, function() {
                     if (editor.getCursorMode() == 'markdown') {
-                        editor[mode == 'replaceLine' ? 'replaceLine' : 'replaceSelection'](replace);
+                        editor[mode == 'replaceLine' ? 'replaceLine' : 'replaceSelection'](replace, name);
                     }
                 });
             }
-        }
+        };
 
 
         // toolbar actions
         this._initToolbar($this);
         this._buildtoolbar();
-    }
+
+        return this;
+    };
+
+    var MDEditors = {
+        editors: {},
+        init: function() {
+            var element;
+            $('textarea[data-grav-mdeditor]').each(function() {
+                element = $(this);
+                if (!element.parents('[data-collection-template="new"]').length) {
+                    MDEditors.add(element);
+                }
+            });
+        },
+
+        add: function(editor) {
+            editor = $(editor);
+
+            var mdeditor;
+            if (!editor.data('mdeditor_initialized')) {
+                mdeditor = new MDEditor(editor, JSON.parse(editor.attr('data-grav-mdeditor') || '{}'));
+            }
+
+            return mdeditor || MDEditors.editors[editor.attr('name')];
+        }
+    };
 
     // init
     $(function(){
-        $('textarea[data-grav-mdeditor]').each(function() {
-            var editor = $(this), obj;
+        MDEditors.init();
+    });
 
-            if (!editor.data('mdeditor')) {
-                obj = MDEditor(editor, JSON.parse(editor.attr('data-grav-mdeditor') || '{}'));
-            }
-        });
-    })
+    window.MDEditors = MDEditors;
 })());
